@@ -55,7 +55,7 @@ async function createReferencePage(props) {
 
       URL: { url: url || null },
 
-      // 🟢 Miniature envoyée dans la colonne Cover (URL)
+      // Colonne Notion "Cover" (type = URL)
       Cover: { url: thumbnail || null },
 
       Description: {
@@ -105,31 +105,79 @@ async function getNextIndexNumber() {
 ----------------------------- */
 
 async function analyzeWithOpenAI({ note, url, index }) {
+  const safeNote = note || "";
+  const safeUrl = url || "";
+
   const prompt = `
 Tu es un expert en classification de contenus social media.
 
-Tu dois produire :
-1) "type" = UGC, Incarné, Facecam, Tutoriel, Podcast, Motion, etc.
-2) "formatLabel" = Vertical, Horizontal, Carré, Reel, Shorts.
-3) "theme" = Lifestyle, Produit, Beauté, Mode, Tech, Corporate, Humour, etc.
-4) "description" = résumé court (1–2 phrases max).
+⚠️ IMPORTANT :
+- La description et les mots-clés peuvent être en FRANÇAIS.
+- Tu dois être PRÉCIS, pas générique.
+- NE RENVOIE *JAMAIS* "Générique" comme thème.
+- Si tu hésites, choisis la catégorie la plus proche.
 
-⚠️ Ne génère pas de numéro, le titre final sera :
-"<type> <formatLabel> <theme> ${index}"
+1) "type" → choisis UNE valeur parmi :
+   - "UGC"
+   - "Incarné"
+   - "Facecam"
+   - "Interview"
+   - "Tutoriel"
+   - "Storytelling"
+   - "Podcast"
+   - "Motion"
+   - "Carousel"
+   - "Réaction"
+   - "Review"
+   - "Témoignage"
 
-RENVOIE UNIQUEMENT CE JSON STRICT :
+2) "formatLabel" → choisis UNE valeur parmi :
+   - "Vertical"
+   - "Horizontal"
+   - "Carré"
+   - "Reel"
+   - "Shorts"
+   - "Story"
+
+3) "theme" → choisis UNE valeur parmi :
+   - "Humour"
+   - "Beauté / cosmétique"
+   - "Mode"
+   - "Lifestyle"
+   - "Corporate"
+   - "Tech"
+   - "Food"
+   - "Gaming"
+   - "Culture"
+   - "Illustration"
+   - "Tuto"
+   - "Interview"
+   - "Promo"
+   - "Branding"
+   - "Autre"
+
+Règles :
+- Si tu vois "humour", "drôle", "drole", "marrant" → theme = "Humour".
+- Si tu vois "Yves Rocher", "Sephora", "L'Oréal", "Loreal", "Nivea", "cosmétique", "maquillage", "skincare" → theme = "Beauté / cosmétique".
+- Si tu vois "illustration", "illustré", "dessin", "dessiné", "dessine" → theme = "Illustration".
+- Si rien ne correspond, utilise "Autre" (mais JAMAIS "Générique").
+
+4) "description" → un résumé factuel en 1–2 phrases max, en français, qui décrit le contenu (ce qu’on voit / ce que ça raconte). Pas un slogan.
+
+FORMAT DE SORTIE STRICT (JSON) :
+
 {
-  "type": "...",
-  "formatLabel": "...",
-  "theme": "...",
-  "description": "..."
+  "type": "…",
+  "formatLabel": "…",
+  "theme": "…",
+  "description": "…"
 }
 
-Texte utilisateur :
-${note || "(vide)"}
+Texte utilisateur (mots-clés / description) :
+${safeNote}
 
-URL :
-${url || "(aucune)"}
+URL du contenu :
+${safeUrl}
 `;
 
   try {
@@ -142,14 +190,16 @@ ${url || "(aucune)"}
       ],
     });
 
-    return JSON.parse(completion.choices[0].message.content);
+    const raw = completion.choices[0]?.message?.content || "{}";
+    return JSON.parse(raw);
   } catch (err) {
     console.error("Erreur OpenAI :", err);
+    // Fallback : on ne force pas "Générique" ici
     return {
-      type: "Référence",
-      formatLabel: "Vertical",
-      theme: "Générique",
-      description: note || "",
+      type: null,
+      formatLabel: null,
+      theme: null,
+      description: safeNote,
     };
   }
 }
@@ -226,11 +276,16 @@ const VOCAB = {
 };
 
 function analyzeNoteForTagsSimple(note) {
-  if (!note) return Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
+  if (!note) {
+    return Object.fromEntries(Object.keys(VOCAB).map((k) => [k, []])).tags
+      ? {}
+      : { tags: [] };
+  }
 
   const lower = note.toLowerCase();
-  const result = Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
-  result.tags = [];
+
+  const base = Object.fromEntries(Object.keys(VOCAB).map((k) => [k, []]));
+  const result = { ...base, tags: [] };
 
   for (const key in VOCAB) {
     for (const value of VOCAB[key]) {
@@ -254,7 +309,7 @@ async function fetchThumbnailUrl(url) {
   try {
     const lower = url.toLowerCase();
 
-    // 1) TikTok → oEmbed officiel
+    // 1) TikTok — oEmbed officiel
     if (lower.includes("tiktok.com")) {
       try {
         const endpoint = `https://www.tiktok.com/oembed?url=${encodeURIComponent(
@@ -274,7 +329,7 @@ async function fetchThumbnailUrl(url) {
     const ytMatch = lower.match(
       /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-z0-9_-]+)/i
     );
-    if (ytMatch) {
+    if (ytMatch && ytMatch[1]) {
       return `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
     }
 
@@ -287,7 +342,9 @@ async function fetchThumbnailUrl(url) {
     }
 
     // 4) Fallback image directe
-    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(lower)) return url;
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(lower)) {
+      return url;
+    }
 
     return null;
   } catch (err) {
@@ -303,7 +360,7 @@ async function fetchThumbnailUrl(url) {
 function parseSlackBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", chunk => (body += chunk.toString()));
+    req.on("data", (chunk) => (body += chunk.toString()));
     req.on("end", () => resolve(querystring.parse(body)));
     req.on("error", reject);
   });
@@ -347,7 +404,6 @@ export default async function handler(req, res) {
 async function handleAddRef({ text, user_name, res }) {
   const raw = (text || "").trim();
 
-  // Si vide
   if (!raw) {
     return sendSlack(res, {
       response_type: "ephemeral",
@@ -355,10 +411,11 @@ async function handleAddRef({ text, user_name, res }) {
     });
   }
 
-  // URL détectée
-  const url = (raw.match(/https?:\/\/\S+/) || [null])[0];
+  // URL
+  const urlMatch = raw.match(/https?:\/\/\S+/);
+  const url = urlMatch ? urlMatch[0] : null;
 
-  // Note = texte sans URL
+  // Note = texte sans l’URL
   const note = url ? raw.replace(url, "").trim() : raw;
 
   // Numéro auto
@@ -366,9 +423,45 @@ async function handleAddRef({ text, user_name, res }) {
 
   // IA classification
   const ai = await analyzeWithOpenAI({ note, url, index });
+
   const type = ai.type || "Référence";
   const formatLabel = ai.formatLabel || "Vertical";
-  const theme = ai.theme || "Générique";
+  let theme = ai.theme; // on ne met plus "Générique" par défaut ici
+
+  // 🔍 Rattrapage maison pour le thème
+  const txt = (note || "").toLowerCase();
+  if (!theme || theme.toLowerCase() === "générique" || theme.toLowerCase() === "autre") {
+    if (
+      txt.includes("yves rocher") ||
+      txt.includes("sephora") ||
+      txt.includes("l'oréal") ||
+      txt.includes("loreal") ||
+      txt.includes("nivea") ||
+      txt.includes("cosmétique") ||
+      txt.includes("maquillage") ||
+      txt.includes("skincare")
+    ) {
+      theme = "Beauté / cosmétique";
+    } else if (
+      txt.includes("humour") ||
+      txt.includes("drôle") ||
+      txt.includes("drole") ||
+      txt.includes("marrant")
+    ) {
+      theme = "Humour";
+    } else if (
+      txt.includes("illustration") ||
+      txt.includes("illustré") ||
+      txt.includes("illustre") ||
+      txt.includes("dessin") ||
+      txt.includes("dessiné") ||
+      txt.includes("dessine")
+    ) {
+      theme = "Illustration";
+    } else {
+      theme = "Autre";
+    }
+  }
 
   const title = `${type} ${formatLabel} ${theme} ${index}`;
 
@@ -376,16 +469,16 @@ async function handleAddRef({ text, user_name, res }) {
     ai.description ||
     `${note || "Aucune description."}\n\nAjouté par ${user_name}.`;
 
-  // Auto-tags basés sur ton vocabulaire
+  // Auto-tags
   const auto = analyzeNoteForTagsSimple(note);
 
   let styleDA = [...(auto.styleDA || [])];
-  if (!styleDA.includes(theme)) styleDA.push(theme);
+  if (theme && !styleDA.includes(theme)) styleDA.push(theme);
 
   let tags = [...(auto.tags || [])];
-  if (!tags.includes(theme)) tags.push(theme);
+  if (theme && !tags.includes(theme)) tags.push(theme);
 
-  // Miniature automatique
+  // Miniature
   const thumbnail = await fetchThumbnailUrl(url);
 
   // Envoi dans Notion
@@ -394,22 +487,22 @@ async function handleAddRef({ text, user_name, res }) {
     url,
     description,
     tags,
-    format: auto.format,
-    typeContenu: auto.typeContenu,
-    miseEnScene: auto.miseEnScene,
+    format: auto.format || [],
+    typeContenu: auto.typeContenu || [],
+    miseEnScene: auto.miseEnScene || [],
     styleDA,
-    styleTypo: auto.styleTypo,
-    montageMotion: auto.montageMotion,
-    objectif: auto.objectif,
-    ambiance: auto.ambiance,
-    effets: auto.effets,
+    styleTypo: auto.styleTypo || [],
+    montageMotion: auto.montageMotion || [],
+    objectif: auto.objectif || [],
+    ambiance: auto.ambiance || [],
+    effets: auto.effets || [],
     idInterne: "",
     thumbnail,
   });
 
-  // Réponse enrichie dans Slack
+  // Réponse Slack enrichie
   const tagsPreview =
-    tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
+    tags && tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
 
   const blocks = [
     {
