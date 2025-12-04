@@ -46,7 +46,7 @@ async function createReferencePage(props) {
     thumbnail,
   } = props;
 
-  const page = await notion.pages.create({
+  return await notion.pages.create({
     parent: { database_id: databaseId },
     properties: {
       Title: {
@@ -55,7 +55,7 @@ async function createReferencePage(props) {
 
       URL: { url: url || null },
 
-      // ✔️ MINIATURE → la propriété Notion doit s'appeler Cover (URL)
+      // 🟢 Miniature envoyée dans la colonne Cover (URL)
       Cover: { url: thumbnail || null },
 
       Description: {
@@ -80,8 +80,6 @@ async function createReferencePage(props) {
       "Tags IA validés": { checkbox: false },
     },
   });
-
-  return page.id;
 }
 
 /* -----------------------------
@@ -108,20 +106,18 @@ async function getNextIndexNumber() {
 
 async function analyzeWithOpenAI({ note, url, index }) {
   const prompt = `
-Tu es un assistant de classification de contenus social media.
+Tu es un expert en classification de contenus social media.
 
 Tu dois produire :
+1) "type" = UGC, Incarné, Facecam, Tutoriel, Podcast, Motion, etc.
+2) "formatLabel" = Vertical, Horizontal, Carré, Reel, Shorts.
+3) "theme" = Lifestyle, Produit, Beauté, Mode, Tech, Corporate, Humour, etc.
+4) "description" = résumé court (1–2 phrases max).
 
-1) "type" (UGC, Incarné, Facecam, Tutoriel, Podcast, Motion…)
-2) "formatLabel" (Vertical, Horizontal, Carré, Reel, Shorts)
-3) "theme" (Lifestyle, Produit, Tech, Humour, Beauté, Mode, Corporate…)
-4) "description" (résumé en 1–2 phrases)
-
-⚠️ Le titre sera généré ensuite comme :
+⚠️ Ne génère pas de numéro, le titre final sera :
 "<type> <formatLabel> <theme> ${index}"
 
-Format obligatoire (JSON strict) :
-
+RENVOIE UNIQUEMENT CE JSON STRICT :
 {
   "type": "...",
   "formatLabel": "...",
@@ -141,10 +137,7 @@ ${url || "(aucune)"}
       model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content: "Tu renvoies uniquement du JSON valide.",
-        },
+        { role: "system", content: "Tu renvoies uniquement du JSON valide." },
         { role: "user", content: prompt },
       ],
     });
@@ -153,16 +146,16 @@ ${url || "(aucune)"}
   } catch (err) {
     console.error("Erreur OpenAI :", err);
     return {
-      type: null,
-      formatLabel: null,
-      theme: null,
-      description: null,
+      type: "Référence",
+      formatLabel: "Vertical",
+      theme: "Générique",
+      description: note || "",
     };
   }
 }
 
 /* -----------------------------
-   AUTO-TAGS (VOCAB)
+   VOCAB AUTO-TAGS
 ----------------------------- */
 
 const VOCAB = {
@@ -183,13 +176,10 @@ const VOCAB = {
     "making-of",
     "challenge",
     "podcast",
-    "ASMR",
     "review",
     "témoignage",
     "UGC",
     "présentation produit",
-    "teaser",
-    "annonce",
   ],
   miseEnScene: [
     "fond vert",
@@ -220,55 +210,31 @@ const VOCAB = {
     "bold typography",
     "typo serif",
     "typo manuscrite",
-    "titre oversized",
-    "typographie minimaliste",
+    "titres oversized",
   ],
   montageMotion: [
     "jumpcut",
     "titrage animé",
-    "effets glitch",
+    "glitch",
     "b-roll",
     "slow motion",
     "hyperlapse",
-    "transition dynamique",
   ],
-  objectif: [
-    "branding",
-    "conversion",
-    "promo",
-    "éducation",
-    "social proof",
-    "tuto produit",
-  ],
-  ambiance: [
-    "pastel",
-    "néon",
-    "sombre",
-    "lumineux",
-    "contrasté",
-    "noir et blanc",
-  ],
-  effets: [
-    "grain film",
-    "texture papier",
-    "ombres portées",
-    "stickers",
-    "dégradés",
-    "bandes VHS",
-    "double exposition",
-  ],
+  objectif: ["branding", "conversion", "promo", "éducation"],
+  ambiance: ["pastel", "néon", "sombre", "lumineux"],
+  effets: ["grain film", "texture papier", "stickers", "dégradés"],
 };
 
 function analyzeNoteForTagsSimple(note) {
   if (!note) return Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
 
-  const text = note.toLowerCase();
+  const lower = note.toLowerCase();
   const result = Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
   result.tags = [];
 
   for (const key in VOCAB) {
     for (const value of VOCAB[key]) {
-      if (text.includes(value.toLowerCase())) {
+      if (lower.includes(value.toLowerCase())) {
         result[key].push(value);
         result.tags.push(value);
       }
@@ -279,7 +245,7 @@ function analyzeNoteForTagsSimple(note) {
 }
 
 /* -----------------------------
-   MINIATURE (TikTok + YouTube + fallback)
+   MINIATURE (TikTok + YouTube + NoEmbed)
 ----------------------------- */
 
 async function fetchThumbnailUrl(url) {
@@ -288,7 +254,7 @@ async function fetchThumbnailUrl(url) {
   try {
     const lower = url.toLowerCase();
 
-    // 1) TikTok — oEmbed officiel
+    // 1) TikTok → oEmbed officiel
     if (lower.includes("tiktok.com")) {
       try {
         const endpoint = `https://www.tiktok.com/oembed?url=${encodeURIComponent(
@@ -308,27 +274,24 @@ async function fetchThumbnailUrl(url) {
     const ytMatch = lower.match(
       /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-z0-9_-]+)/i
     );
-    if (ytMatch && ytMatch[1]) {
+    if (ytMatch) {
       return `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
     }
 
-    // 3) noembed (fallback)
+    // 3) NoEmbed fallback
     const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(url)}`;
     const resp = await fetch(endpoint);
-
     if (resp.ok) {
       const data = await resp.json();
       if (data.thumbnail_url) return data.thumbnail_url;
     }
 
-    // 4) L’URL est peut-être directement une image
-    if (lower.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
-      return url;
-    }
+    // 4) Fallback image directe
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(lower)) return url;
 
     return null;
-  } catch (e) {
-    console.error("Erreur fetchThumbnailUrl:", e);
+  } catch (err) {
+    console.error("Erreur fetchThumbnailUrl:", err);
     return null;
   }
 }
@@ -347,7 +310,7 @@ function parseSlackBody(req) {
 }
 
 /* -----------------------------
-   HANDLER PRINCIPAL
+   HANDLER HTTP PRINCIPAL
 ----------------------------- */
 
 export default async function handler(req, res) {
@@ -378,11 +341,13 @@ export default async function handler(req, res) {
 }
 
 /* -----------------------------
-        /addref (Slack)
+   /addref — LOGIQUE PRINCIPALE
 ----------------------------- */
 
 async function handleAddRef({ text, user_name, res }) {
   const raw = (text || "").trim();
+
+  // Si vide
   if (!raw) {
     return sendSlack(res, {
       response_type: "ephemeral",
@@ -390,38 +355,40 @@ async function handleAddRef({ text, user_name, res }) {
     });
   }
 
-  // Détecter URL
+  // URL détectée
   const url = (raw.match(/https?:\/\/\S+/) || [null])[0];
+
+  // Note = texte sans URL
   const note = url ? raw.replace(url, "").trim() : raw;
 
-  // Index auto
+  // Numéro auto
   const index = await getNextIndexNumber();
 
-  // IA
+  // IA classification
   const ai = await analyzeWithOpenAI({ note, url, index });
-
   const type = ai.type || "Référence";
   const formatLabel = ai.formatLabel || "Vertical";
   const theme = ai.theme || "Générique";
+
   const title = `${type} ${formatLabel} ${theme} ${index}`;
 
   const description =
     ai.description ||
     `${note || "Aucune description."}\n\nAjouté par ${user_name}.`;
 
-  // Auto-tags
+  // Auto-tags basés sur ton vocabulaire
   const auto = analyzeNoteForTagsSimple(note);
 
   let styleDA = [...(auto.styleDA || [])];
-  if (theme && !styleDA.includes(theme)) styleDA.push(theme);
+  if (!styleDA.includes(theme)) styleDA.push(theme);
 
   let tags = [...(auto.tags || [])];
-  if (theme && !tags.includes(theme)) tags.push(theme);
+  if (!tags.includes(theme)) tags.push(theme);
 
-  // Miniature
+  // Miniature automatique
   const thumbnail = await fetchThumbnailUrl(url);
 
-  // Envoi à Notion
+  // Envoi dans Notion
   await createReferencePage({
     title,
     url,
@@ -440,15 +407,44 @@ async function handleAddRef({ text, user_name, res }) {
     thumbnail,
   });
 
-  // Réponse Slack
+  // Réponse enrichie dans Slack
+  const tagsPreview =
+    tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `✅ *Référence ajoutée* par *${user_name}*`,
+      },
+    },
+    {
+      type: "section",
+      fields: [
+        { type: "mrkdwn", text: `*Titre*\n${title}` },
+        { type: "mrkdwn", text: `*URL*\n${url || "_(non fournie)_"}` },
+        {
+          type: "mrkdwn",
+          text: `*Type / Format / Thème*\n${type} / ${formatLabel} / ${theme}`,
+        },
+        {
+          type: "mrkdwn",
+          text: `*Tags détectés*\n${tagsPreview}`,
+        },
+      ],
+    },
+  ];
+
   return sendSlack(res, {
     response_type: "ephemeral",
-    text: `✅ Référence ajoutée par *${user_name}*`,
+    text: "Référence ajoutée.",
+    blocks,
   });
 }
 
 /* -----------------------------
-            UTIL
+   UTIL SLACK
 ----------------------------- */
 
 function sendSlack(res, payload) {
