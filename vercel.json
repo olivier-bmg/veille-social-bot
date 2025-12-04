@@ -1,8 +1,14 @@
 {
-  "version": 2,
-  "functions": {
-    "api/slack/command.js": {
-      "runtime": "nodejs18.x"
+  "builds": [
+    {
+      "src": "api/slack/command.js",
+      "use": "@vercel/node"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    }
+  ]
 }
