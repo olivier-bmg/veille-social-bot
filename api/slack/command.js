@@ -55,7 +55,7 @@ async function createReferencePage(props) {
 
       URL: { url: url || null },
 
-      // ✔️ Ta nouvelle colonne de miniature
+      // ✔️ MINIATURE → la propriété Notion doit s'appeler Cover (URL)
       Cover: { url: thumbnail || null },
 
       Description: {
@@ -95,8 +95,7 @@ async function getNextIndexNumber() {
       page_size: 200,
     });
     const count = resp.results?.length || 0;
-    const n = count + 1;
-    return n.toString().padStart(2, "0");
+    return (count + 1).toString().padStart(2, "0");
   } catch (e) {
     console.error("Erreur getNextIndexNumber:", e);
     return "01";
@@ -108,23 +107,21 @@ async function getNextIndexNumber() {
 ----------------------------- */
 
 async function analyzeWithOpenAI({ note, url, index }) {
-  const safeNote = (note || "").slice(0, 1000);
-  const safeUrl = url || "";
-
   const prompt = `
-Tu es un assistant expert en classification de contenus social media.
+Tu es un assistant de classification de contenus social media.
 
-Objectifs :
-1) "type" = UGC, Incarné, Facecam, Tutoriel, Podcast, etc.
-2) "formatLabel" = Vertical, Horizontal, Carré, Reel, Shorts, etc.
-3) "theme" = Lifestyle, Produit, Corporate, Tech, Humour, Beauté, Mode, etc.
-4) "description" = résumé en 1–2 phrases max (pas un slogan).
+Tu dois produire :
 
-⚙️ Le titre final sera généré ensuite comme :
+1) "type" (UGC, Incarné, Facecam, Tutoriel, Podcast, Motion…)
+2) "formatLabel" (Vertical, Horizontal, Carré, Reel, Shorts)
+3) "theme" (Lifestyle, Produit, Tech, Humour, Beauté, Mode, Corporate…)
+4) "description" (résumé en 1–2 phrases)
+
+⚠️ Le titre sera généré ensuite comme :
 "<type> <formatLabel> <theme> ${index}"
-Ne renvoie pas de numéro dans tes données.
 
-📄 FORMAT DE SORTIE STRICT (JSON) :
+Format obligatoire (JSON strict) :
+
 {
   "type": "...",
   "formatLabel": "...",
@@ -132,11 +129,11 @@ Ne renvoie pas de numéro dans tes données.
   "description": "..."
 }
 
-Note :
-${safeNote}
+Texte utilisateur :
+${note || "(vide)"}
 
 URL :
-${safeUrl}
+${url || "(aucune)"}
 `;
 
   try {
@@ -152,24 +149,15 @@ ${safeUrl}
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content || "{}";
-
-    let parsed = {};
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("Erreur parse JSON OpenAI:", e, raw);
-    }
-
-    return {
-      type: parsed.type || null,
-      formatLabel: parsed.formatLabel || null,
-      theme: parsed.theme || null,
-      description: parsed.description || null,
-    };
+    return JSON.parse(completion.choices[0].message.content);
   } catch (err) {
     console.error("Erreur OpenAI :", err);
-    return { type: null, formatLabel: null, theme: null, description: null };
+    return {
+      type: null,
+      formatLabel: null,
+      theme: null,
+      description: null,
+    };
   }
 }
 
@@ -178,18 +166,7 @@ ${safeUrl}
 ----------------------------- */
 
 const VOCAB = {
-  format: [
-    "vertical",
-    "horizontal",
-    "carré",
-    "carrousel",
-    "story",
-    "reel",
-    "shorts",
-    "16:9",
-    "9:16",
-    "1:1",
-  ],
+  format: ["vertical", "horizontal", "carré", "story", "reel", "shorts"],
   typeContenu: [
     "incarné",
     "facecam",
@@ -213,200 +190,143 @@ const VOCAB = {
     "présentation produit",
     "teaser",
     "annonce",
-    "humoristique",
-    "informatif",
-    "éducatif",
   ],
   miseEnScene: [
     "fond vert",
     "fond simple",
     "fond décor réel",
     "en mouvement",
-    "multicam",
     "plan fixe",
     "gros plan",
     "plan large",
-    "split screen",
     "duo",
     "voix off",
-    "face reveal",
     "POV",
-    "maincam",
   ],
   styleDA: [
     "rétro",
     "futuriste",
     "brutaliste",
-    "doodle",
     "cartoon",
     "flat design",
-    "3D render",
     "cyberpunk",
-    "corporate clean",
-    "editorial",
-    "pop culture",
-    "tech / UI",
-    "tech",
-    "organic",
     "premium",
-    "grunge",
-    "minimaliste",
-    "photojournalisme",
-    "duotone",
-    "monochrome",
     "vintage",
     "Y2K",
-    "Pinterest aesthetic",
-    "moodboard",
+    "editorial",
+    "corporate clean",
   ],
   styleTypo: [
     "bold typography",
-    "typo condensée",
-    "typo géométrique",
     "typo serif",
     "typo manuscrite",
     "titre oversized",
-    "typographie découpée",
-    "typographie superposée",
     "typographie minimaliste",
   ],
   montageMotion: [
     "jumpcut",
-    "cuts rapides",
-    "transition dynamique",
-    "transition créative",
     "titrage animé",
-    "sous-titres dynamiques",
-    "motion design",
-    "animations 2D",
-    "zooms rapides",
     "effets glitch",
-    "effets VHS",
+    "b-roll",
     "slow motion",
     "hyperlapse",
-    "loop",
-    "b-roll",
-    "cutaways",
+    "transition dynamique",
   ],
   objectif: [
     "branding",
-    "awareness",
     "conversion",
     "promo",
-    "teasing",
     "éducation",
-    "onboarding",
-    "recrutement",
-    "tuto produit",
-    "storytelling marque",
     "social proof",
-    "top 3",
-    "top 5",
-    "news",
+    "tuto produit",
   ],
   ambiance: [
-    "chaud",
-    "froid",
     "pastel",
     "néon",
-    "saturé",
-    "désaturé",
-    "noir et blanc",
-    "contrasté",
     "sombre",
     "lumineux",
-    "color grading ciné",
-    "naturel",
-    "vibrant",
-    "flash colors",
+    "contrasté",
+    "noir et blanc",
   ],
   effets: [
     "grain film",
     "texture papier",
-    "texture bruit",
     "ombres portées",
-    "reflets",
     "stickers",
-    "formes géométriques",
     "dégradés",
     "bandes VHS",
-    "filtres vintage",
-    "halos lumineux",
-    "contours blancs",
     "double exposition",
-    "transparences",
   ],
 };
 
 function analyzeNoteForTagsSimple(note) {
-  if (!note) {
-    return {
-      tags: [],
-      format: [],
-      typeContenu: [],
-      miseEnScene: [],
-      styleDA: [],
-      styleTypo: [],
-      montageMotion: [],
-      objectif: [],
-      ambiance: [],
-      effets: [],
-    };
-  }
+  if (!note) return Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
 
   const text = note.toLowerCase();
+  const result = Object.fromEntries(Object.keys(VOCAB).map(k => [k, []]));
+  result.tags = [];
 
-  const result = {
-    tags: [],
-    format: [],
-    typeContenu: [],
-    miseEnScene: [],
-    styleDA: [],
-    styleTypo: [],
-    montageMotion: [],
-    objectif: [],
-    ambiance: [],
-    effets: [],
-  };
-
-  function match(catKey, list) {
-    for (const v of list) {
-      if (text.includes(v.toLowerCase())) {
-        result[catKey].push(v);
-        result.tags.push(v);
+  for (const key in VOCAB) {
+    for (const value of VOCAB[key]) {
+      if (text.includes(value.toLowerCase())) {
+        result[key].push(value);
+        result.tags.push(value);
       }
     }
-  }
-
-  match("format", VOCAB.format);
-  match("typeContenu", VOCAB.typeContenu);
-  match("miseEnScene", VOCAB.miseEnScene);
-  match("styleDA", VOCAB.styleDA);
-  match("styleTypo", VOCAB.styleTypo);
-  match("montageMotion", VOCAB.montageMotion);
-  match("objectif", VOCAB.objectif);
-  match("ambiance", VOCAB.ambiance);
-  match("effets", VOCAB.effets);
-
-  for (const key of Object.keys(result)) {
-    if (Array.isArray(result[key])) result[key] = [...new Set(result[key])];
   }
 
   return result;
 }
 
 /* -----------------------------
-   MINIATURE VIA NOEMBED
+   MINIATURE (TikTok + YouTube + fallback)
 ----------------------------- */
 
 async function fetchThumbnailUrl(url) {
   if (!url) return null;
+
   try {
+    const lower = url.toLowerCase();
+
+    // 1) TikTok — oEmbed officiel
+    if (lower.includes("tiktok.com")) {
+      try {
+        const endpoint = `https://www.tiktok.com/oembed?url=${encodeURIComponent(
+          url
+        )}`;
+        const resp = await fetch(endpoint);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.thumbnail_url) return data.thumbnail_url;
+        }
+      } catch (e) {
+        console.error("Erreur TikTok oEmbed:", e);
+      }
+    }
+
+    // 2) YouTube
+    const ytMatch = lower.match(
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-z0-9_-]+)/i
+    );
+    if (ytMatch && ytMatch[1]) {
+      return `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+    }
+
+    // 3) noembed (fallback)
     const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(url)}`;
     const resp = await fetch(endpoint);
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    return data.thumbnail_url || null;
+
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.thumbnail_url) return data.thumbnail_url;
+    }
+
+    // 4) L’URL est peut-être directement une image
+    if (lower.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+      return url;
+    }
+
+    return null;
   } catch (e) {
     console.error("Erreur fetchThumbnailUrl:", e);
     return null;
@@ -420,7 +340,7 @@ async function fetchThumbnailUrl(url) {
 function parseSlackBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk) => (body += chunk.toString()));
+    req.on("data", chunk => (body += chunk.toString()));
     req.on("end", () => resolve(querystring.parse(body)));
     req.on("error", reject);
   });
@@ -432,9 +352,8 @@ function parseSlackBody(req) {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify({ error: "Method not allowed" }));
+    res.status(405).json({ error: "Method not allowed" });
+    return;
   }
 
   try {
@@ -464,7 +383,6 @@ export default async function handler(req, res) {
 
 async function handleAddRef({ text, user_name, res }) {
   const raw = (text || "").trim();
-
   if (!raw) {
     return sendSlack(res, {
       response_type: "ephemeral",
@@ -472,44 +390,38 @@ async function handleAddRef({ text, user_name, res }) {
     });
   }
 
-  // 1) Détection URL
-  const urlMatch = raw.match(/https?:\/\/\S+/);
-  const url = urlMatch ? urlMatch[0] : null;
-
-  // 2) Texte sans l'URL
+  // Détecter URL
+  const url = (raw.match(/https?:\/\/\S+/) || [null])[0];
   const note = url ? raw.replace(url, "").trim() : raw;
 
-  // 3) Index auto
+  // Index auto
   const index = await getNextIndexNumber();
 
-  // 4) IA
+  // IA
   const ai = await analyzeWithOpenAI({ note, url, index });
 
   const type = ai.type || "Référence";
   const formatLabel = ai.formatLabel || "Vertical";
   const theme = ai.theme || "Générique";
-
   const title = `${type} ${formatLabel} ${theme} ${index}`;
 
   const description =
     ai.description ||
-    ((note && note.length > 0 ? note : "Référence ajoutée sans description.") +
-      `\n\nAjouté par ${user_name} depuis Slack.`);
+    `${note || "Aucune description."}\n\nAjouté par ${user_name}.`;
 
-  // 5) Auto-tags
+  // Auto-tags
   const auto = analyzeNoteForTagsSimple(note);
 
-  // Style DA = vocab IA + thème IA
   let styleDA = [...(auto.styleDA || [])];
   if (theme && !styleDA.includes(theme)) styleDA.push(theme);
 
   let tags = [...(auto.tags || [])];
   if (theme && !tags.includes(theme)) tags.push(theme);
 
-  // 6) Miniature
+  // Miniature
   const thumbnail = await fetchThumbnailUrl(url);
 
-  // 7) Envoi dans Notion
+  // Envoi à Notion
   await createReferencePage({
     title,
     url,
@@ -528,33 +440,10 @@ async function handleAddRef({ text, user_name, res }) {
     thumbnail,
   });
 
-  // 8) Réponse Slack
-  const tagsPreview =
-    tags && tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
-
+  // Réponse Slack
   return sendSlack(res, {
     response_type: "ephemeral",
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `✅ *Référence ajoutée* par *${user_name}*`,
-        },
-      },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `*Titre*\n${title}` },
-          { type: "mrkdwn", text: `*URL*\n${url || "(aucune)"}` },
-          {
-            type: "mrkdwn",
-            text: `*Type / Format / Thème*\n${type} / ${formatLabel} / ${theme}`,
-          },
-          { type: "mrkdwn", text: `*Tags détectés*\n${tagsPreview}` },
-        ],
-      },
-    ],
+    text: `✅ Référence ajoutée par *${user_name}*`,
   });
 }
 
