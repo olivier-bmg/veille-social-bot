@@ -113,4 +113,199 @@ async function createReferencePage(props) {
     },
   });
 
-  return pag
+  return page.id;
+}
+
+// ---------- OUTILS PINECONE ----------
+
+async function upsertReferenceVector({ id, embedding, metadata }) {
+  const index = getPineconeIndex();
+  await index.upsert([
+    {
+      id,
+      values: embedding,
+      metadata,
+    },
+  ]);
+}
+
+async function searchSimilar({ embedding, topK = 5 }) {
+  const index = getPineconeIndex();
+  return await index.query({
+    topK,
+    vector: embedding,
+    includeMetadata: true,
+  });
+}
+
+// ---------- PARSE BODY SLACK ----------
+
+function parseSlackBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      const parsed = querystring.parse(body);
+      resolve(parsed);
+    });
+    req.on("error", reject);
+  });
+}
+
+// ---------- HANDLER PRINCIPAL ----------
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "Method not allowed" }));
+    return;
+  }
+
+  try {
+    const params = await parseSlackBody(req);
+    const { command, text, user_name } = params;
+
+    if (command === "/addref") {
+      await handleAddRef({ text, user_name, res });
+      return;
+    }
+
+    if (command === "/ref") {
+      await handleSearch({ text, user_name, res });
+      return;
+    }
+
+    return sendSlack(res, {
+      response_type: "ephemeral",
+      text: "Commande non reconnue.",
+    });
+  } catch (err) {
+    console.error(err);
+    return sendSlack(res, {
+      response_type: "ephemeral",
+      text: "❌ Erreur côté bot. Vérifie les logs Vercel.",
+    });
+  }
+}
+
+// ---------- LOGIQUE /addref (version rapide) ----------
+
+async function handleAddRef({ text, user_name, res }) {
+  const raw = (text || "").trim();
+  if (!raw) {
+    return sendSlack(res, {
+      response_type: "ephemeral",
+      text: "Utilisation : `/addref URL [description]`",
+    });
+    return;
+  }
+
+  const [url, ...rest] = raw.split(/\s+/);
+  const userNote = rest.join(" ");
+
+  const title =
+    (userNote && userNote.slice(0, 80)) || "Référence ajoutée via /addref";
+  const description =
+    userNote || `Référence ajoutée par ${user_name} depuis Slack`;
+
+  const pageId = await createReferencePage({
+    title,
+    url,
+    description,
+    tags: [],
+    format: [],
+    styleVisuel: [],
+    couleursMood: [],
+    elementsGraphiques: [],
+    structureNarration: [],
+    usage: [],
+    miseEnScene: [],
+    styleTypo: [],
+    montageMotion: [],
+    idInterne: "",
+  });
+
+  const embedding = await embedText(title + "\n" + description);
+
+  await upsertReferenceVector({
+    id: pageId,
+    embedding,
+    metadata: {
+      title,
+      url,
+      description,
+      tags: [],
+      format: [],
+    },
+  });
+
+  return sendSlack(res, {
+    response_type: "ephemeral",
+    text: `✅ Référence ajoutée par *${user_name}*\n*${title}*\n${url}`,
+  });
+}
+
+// ---------- LOGIQUE /ref (recherche) ----------
+
+async function handleSearch({ text, user_name, res }) {
+  const query = (text || "").trim();
+  if (!query) {
+    return sendSlack(res, {
+      response_type: "ephemeral",
+      text: "Utilisation : `/ref mots clés`",
+    });
+  }
+
+  const embedding = await embedText(query);
+  const results = await searchSimilar({ embedding, topK: 5 });
+
+  if (!results.matches || results.matches.length === 0) {
+    return sendSlack(res, {
+      response_type: "ephemeral",
+      text: `Aucune référence trouvée pour : _${query}_`,
+    });
+  }
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `🔎 Résultats pour : *${query}* (par *${user_name}*)`,
+      },
+    },
+    { type: "divider" },
+  ];
+
+  for (const match of results.matches.slice(0, 3)) {
+    const m = match.metadata || {};
+    const tags =
+      Array.isArray(m.tags) && m.tags.length > 0
+        ? `*Tags :* ${m.tags.join(", ")}`
+        : "";
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${m.title || "Sans titre"}*\n${m.description || ""}\n${
+          m.url ? `<${m.url}|Voir>` : ""
+        }\n${tags}`,
+      },
+    });
+    blocks.push({ type: "divider" });
+  }
+
+  return sendSlack(res, { response_type: "ephemeral", blocks });
+}
+
+// ---------- UTIL ----------
+
+function sendSlack(res, payload) {
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(payload));
+}
