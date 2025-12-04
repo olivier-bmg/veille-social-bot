@@ -55,8 +55,8 @@ async function createReferencePage(props) {
 
       URL: { url: url || null },
 
-      // ⚠️ nom de ta colonne dans Notion : "Tumbnail"
-      Tumbnail: { url: thumbnail || null },
+      // ⚠️ nom de ta colonne dans Notion : "Thumbnail"
+      Thumbnail: { url: thumbnail || null },
 
       Description: {
         rich_text: [{ text: { content: description || "" } }],
