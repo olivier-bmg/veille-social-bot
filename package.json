@@ -1,0 +1,11 @@
+{
+  "name": "veille-social-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@notionhq/client": "^2.2.10",
+    "@pinecone-database/pinecone": "^4.0.0",
+    "openai": "^4.0.0",
+    "querystring": "^0.2.1"
+  }
+}
