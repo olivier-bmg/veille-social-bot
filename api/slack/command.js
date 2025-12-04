@@ -55,7 +55,7 @@ async function createReferencePage(props) {
 
       URL: { url: url || null },
 
-      // ⚠️ nom de ta colonne dans Notion : "Thumbnail"
+      // ✔️ Ta nouvelle colonne de miniature
       Cover: { url: thumbnail || null },
 
       Description: {
@@ -92,7 +92,7 @@ async function getNextIndexNumber() {
   try {
     const resp = await notion.databases.query({
       database_id: databaseId,
-      page_size: 100,
+      page_size: 200,
     });
     const count = resp.results?.length || 0;
     const n = count + 1;
@@ -112,75 +112,31 @@ async function analyzeWithOpenAI({ note, url, index }) {
   const safeUrl = url || "";
 
   const prompt = `
-Tu es un assistant expert en naming pour une base de veille créative social media.
+Tu es un assistant expert en classification de contenus social media.
 
-🎯 OBJECTIF :
-À partir :
-- d'une URL de contenu (TikTok, Reels, Shorts, etc.)
-- d'une courte description écrite par le créatif
+Objectifs :
+1) "type" = UGC, Incarné, Facecam, Tutoriel, Podcast, etc.
+2) "formatLabel" = Vertical, Horizontal, Carré, Reel, Shorts, etc.
+3) "theme" = Lifestyle, Produit, Corporate, Tech, Humour, Beauté, Mode, etc.
+4) "description" = résumé en 1–2 phrases max (pas un slogan).
 
-Tu dois produire :
-
-1) "type" (UN seul terme, 1–2 mots max) :
-   - "UGC"
-   - "Incarné"
-   - "Facecam"
-   - "Interview"
-   - "Tutoriel"
-   - "Storytelling"
-   - "Motion"
-   - "Carousel"
-   - "Podcast"
-   - etc.
-
-2) "formatLabel" :
-   - "Vertical"
-   - "Horizontal"
-   - "Carré"
-   - "Story"
-   - "Reel"
-   - "Shorts"
-   (Choisis le plus pertinent, par défaut "Vertical" si tu n'es pas sûr.)
-
-3) "theme" (qui sera utilisé comme Style DA dans Notion) :
-   Exemples :
-   - "Lifestyle"
-   - "Produit"
-   - "Corporate"
-   - "Humour"
-   - "Tech"
-   - "Food"
-   - "Beauté"
-   - "Mode"
-   - "Gaming"
-   - "Culture"
-   - "Tuto"
-   - "Interview"
-   - "Promo"
-   - "Branding"
-   (Choisis un seul mot ou groupe très court.)
-
-4) "description" (1 à 2 phrases max) :
-   Résumé du contenu pour la base de veille (pas un post, pas un slogan).
-
-⚙️ Le titre final sera construit en code comme :
+⚙️ Le titre final sera généré ensuite comme :
 "<type> <formatLabel> <theme> ${index}"
-Ne mets PAS de numéro dans tes réponses.
-Ne génère PAS le titre toi-même, ne renvoie QUE les champs demandés.
+Ne renvoie pas de numéro dans tes données.
 
-📄 FORMAT DE SORTIE OBLIGATOIRE (JSON strict) :
+📄 FORMAT DE SORTIE STRICT (JSON) :
 {
-  "type": "…",
-  "formatLabel": "…",
-  "theme": "…",
-  "description": "…"
+  "type": "...",
+  "formatLabel": "...",
+  "theme": "...",
+  "description": "..."
 }
 
-📝 DESCRIPTION UTILISATEUR :
-${safeNote || "(vide)"}
+Note :
+${safeNote}
 
-🔗 URL DU CONTENU :
-${safeUrl || "(aucune URL)"}
+URL :
+${safeUrl}
 `;
 
   try {
@@ -198,12 +154,11 @@ ${safeUrl || "(aucune URL)"}
 
     const raw = completion.choices[0]?.message?.content || "{}";
 
-    let parsed;
+    let parsed = {};
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
       console.error("Erreur parse JSON OpenAI:", e, raw);
-      parsed = {};
     }
 
     return {
@@ -219,7 +174,7 @@ ${safeUrl || "(aucune URL)"}
 }
 
 /* -----------------------------
-   AUTO-TAGS "MAISON" (FIABLE)
+   AUTO-TAGS (VOCAB)
 ----------------------------- */
 
 const VOCAB = {
@@ -414,62 +369,42 @@ function analyzeNoteForTagsSimple(note) {
     effets: [],
   };
 
-  function matchCategory(catKey, list) {
-    for (const value of list) {
-      const v = value.toLowerCase();
-      if (text.includes(v)) {
-        result[catKey].push(value);
-        result.tags.push(value);
+  function match(catKey, list) {
+    for (const v of list) {
+      if (text.includes(v.toLowerCase())) {
+        result[catKey].push(v);
+        result.tags.push(v);
       }
     }
   }
 
-  matchCategory("format", VOCAB.format);
-  matchCategory("typeContenu", VOCAB.typeContenu);
-  matchCategory("miseEnScene", VOCAB.miseEnScene);
-  matchCategory("styleDA", VOCAB.styleDA);
-  matchCategory("styleTypo", VOCAB.styleTypo);
-  matchCategory("montageMotion", VOCAB.montageMotion);
-  matchCategory("objectif", VOCAB.objectif);
-  matchCategory("ambiance", VOCAB.ambiance);
-  matchCategory("effets", VOCAB.effets);
-
-  if (text.includes("humour") || text.includes("drôle")) {
-    if (!result.typeContenu.includes("humoristique")) {
-      result.typeContenu.push("humoristique");
-      result.tags.push("humoristique");
-    }
-  }
-  if (text.includes("tuto")) {
-    if (!result.typeContenu.includes("tutoriel")) {
-      result.typeContenu.push("tutoriel");
-      result.tags.push("tutoriel");
-    }
-  }
+  match("format", VOCAB.format);
+  match("typeContenu", VOCAB.typeContenu);
+  match("miseEnScene", VOCAB.miseEnScene);
+  match("styleDA", VOCAB.styleDA);
+  match("styleTypo", VOCAB.styleTypo);
+  match("montageMotion", VOCAB.montageMotion);
+  match("objectif", VOCAB.objectif);
+  match("ambiance", VOCAB.ambiance);
+  match("effets", VOCAB.effets);
 
   for (const key of Object.keys(result)) {
-    if (Array.isArray(result[key])) {
-      result[key] = [...new Set(result[key])];
-    }
+    if (Array.isArray(result[key])) result[key] = [...new Set(result[key])];
   }
 
   return result;
 }
 
 /* -----------------------------
-   MINIATURE DEPUIS LE CONTENU
+   MINIATURE VIA NOEMBED
 ----------------------------- */
 
 async function fetchThumbnailUrl(url) {
   if (!url) return null;
   try {
-    // noembed supporte YouTube, TikTok, Vimeo, etc.
     const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(url)}`;
     const resp = await fetch(endpoint);
-    if (!resp.ok) {
-      console.warn("noembed non OK:", resp.status);
-      return null;
-    }
+    if (!resp.ok) return null;
     const data = await resp.json();
     return data.thumbnail_url || null;
   } catch (e) {
@@ -510,27 +445,15 @@ export default async function handler(req, res) {
       return await handleAddRef({ text, user_name, res });
     }
 
-    if (command === "/ref") {
-      return sendSlack(res, {
-        response_type: "ephemeral",
-        text:
-          "🔎 La recherche \"/ref\" sera activée dans une prochaine étape. Pour l'instant, utilise `/addref` pour ajouter des références.",
-      });
-    }
-
     return sendSlack(res, {
       response_type: "ephemeral",
       text: "Commande inconnue.",
     });
   } catch (err) {
     console.error("BOT ERROR:", err);
-    const msg =
-      err?.message ||
-      err?.toString() ||
-      "Erreur inconnue (aucun message d’erreur fourni).";
     return sendSlack(res, {
       response_type: "ephemeral",
-      text: `❌ Erreur côté bot : ${msg}`,
+      text: `❌ Erreur côté bot : ${err.message}`,
     });
   }
 }
@@ -549,24 +472,23 @@ async function handleAddRef({ text, user_name, res }) {
     });
   }
 
-  // 1) on détecte l’URL
+  // 1) Détection URL
   const urlMatch = raw.match(/https?:\/\/\S+/);
   const url = urlMatch ? urlMatch[0] : null;
 
-  // 2) note = texte sans l’URL
+  // 2) Texte sans l'URL
   const note = url ? raw.replace(url, "").trim() : raw;
 
-  // 3) récupérer un index auto (01, 02, 03…)
+  // 3) Index auto
   const index = await getNextIndexNumber();
 
-  // 4) IA pour type, format, "thème" (utilisé comme Style DA) + description
+  // 4) IA
   const ai = await analyzeWithOpenAI({ note, url, index });
 
   const type = ai.type || "Référence";
   const formatLabel = ai.formatLabel || "Vertical";
   const theme = ai.theme || "Générique";
 
-  // Titre final normé : "UGC Vertical Lifestyle 01"
   const title = `${type} ${formatLabel} ${theme} ${index}`;
 
   const description =
@@ -574,26 +496,20 @@ async function handleAddRef({ text, user_name, res }) {
     ((note && note.length > 0 ? note : "Référence ajoutée sans description.") +
       `\n\nAjouté par ${user_name} depuis Slack.`);
 
-  // 5) Tags / catégories via notre moteur simple (fiable)
+  // 5) Auto-tags
   const auto = analyzeNoteForTagsSimple(note);
 
-  // 6) On fabrique le Style DA final :
-  //    = ce que le moteur a trouvé + le theme IA (si différent)
-  let styleDA = Array.isArray(auto.styleDA) ? [...auto.styleDA] : [];
-  if (theme && !styleDA.includes(theme)) {
-    styleDA.push(theme);
-  }
+  // Style DA = vocab IA + thème IA
+  let styleDA = [...(auto.styleDA || [])];
+  if (theme && !styleDA.includes(theme)) styleDA.push(theme);
 
-  // 7) On ajoute aussi le thème dans Tags globaux
-  let tags = Array.isArray(auto.tags) ? [...auto.tags] : [];
-  if (theme && !tags.includes(theme)) {
-    tags.push(theme);
-  }
+  let tags = [...(auto.tags || [])];
+  if (theme && !tags.includes(theme)) tags.push(theme);
 
-  // 8) On récupère éventuellement une miniature depuis l’URL
+  // 6) Miniature
   const thumbnail = await fetchThumbnailUrl(url);
 
-  // 9) Création de la page Notion
+  // 7) Envoi dans Notion
   await createReferencePage({
     title,
     url,
@@ -612,50 +528,33 @@ async function handleAddRef({ text, user_name, res }) {
     thumbnail,
   });
 
-  // 🔟 Réponse Slack avec un peu de mise en forme
+  // 8) Réponse Slack
   const tagsPreview =
     tags && tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
 
-  const blocks = [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `✅ *Référence ajoutée* par *${user_name}*`,
-      },
-    },
-    {
-      type: "section",
-      fields: [
-        {
-          type: "mrkdwn",
-          text: `*Titre*\n${title}`,
-        },
-        url
-          ? {
-              type: "mrkdwn",
-              text: `*URL*\n${url}`,
-            }
-          : {
-              type: "mrkdwn",
-              text: `*URL*\n_(aucune)`,
-            },
-        {
-          type: "mrkdwn",
-          text: `*Type / Format / Thème*\n${type} / ${formatLabel} / ${theme}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Tags détectés*\n${tagsPreview}`,
-        },
-      ],
-    },
-  ];
-
   return sendSlack(res, {
     response_type: "ephemeral",
-    text: "Référence ajoutée.",
-    blocks,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `✅ *Référence ajoutée* par *${user_name}*`,
+        },
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Titre*\n${title}` },
+          { type: "mrkdwn", text: `*URL*\n${url || "(aucune)"}` },
+          {
+            type: "mrkdwn",
+            text: `*Type / Format / Thème*\n${type} / ${formatLabel} / ${theme}`,
+          },
+          { type: "mrkdwn", text: `*Tags détectés*\n${tagsPreview}` },
+        ],
+      },
+    ],
   });
 }
 
