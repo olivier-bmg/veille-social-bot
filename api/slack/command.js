@@ -43,6 +43,7 @@ async function createReferencePage(props) {
     ambiance,
     effets,
     idInterne,
+    thumbnail,
   } = props;
 
   const page = await notion.pages.create({
@@ -53,6 +54,9 @@ async function createReferencePage(props) {
       },
 
       URL: { url: url || null },
+
+      // ⚠️ nom de ta colonne dans Notion : "Tumbnail"
+      Tumbnail: { url: thumbnail || null },
 
       Description: {
         rich_text: [{ text: { content: description || "" } }],
@@ -86,7 +90,6 @@ async function createReferencePage(props) {
 
 async function getNextIndexNumber() {
   try {
-    // On récupère jusqu'à 100 pages, ça suffit largement pour ton usage actuel
     const resp = await notion.databases.query({
       database_id: databaseId,
       page_size: 100,
@@ -101,7 +104,7 @@ async function getNextIndexNumber() {
 }
 
 /* -----------------------------
-   IA : TITRE COURT + THÈME
+   IA : TYPE / FORMAT / THEME
 ----------------------------- */
 
 async function analyzeWithOpenAI({ note, url, index }) {
@@ -109,7 +112,7 @@ async function analyzeWithOpenAI({ note, url, index }) {
   const safeUrl = url || "";
 
   const prompt = `
-Tu es un assistant expert en naming pour une base de données interne de références créatives social media.
+Tu es un assistant expert en naming pour une base de veille créative social media.
 
 🎯 OBJECTIF :
 À partir :
@@ -118,7 +121,7 @@ Tu es un assistant expert en naming pour une base de données interne de référ
 
 Tu dois produire :
 
-1) Un "type" (exemples possibles) :
+1) "type" (UN seul terme, 1–2 mots max) :
    - "UGC"
    - "Incarné"
    - "Facecam"
@@ -128,18 +131,19 @@ Tu dois produire :
    - "Motion"
    - "Carousel"
    - "Podcast"
-   Choisis UN seul mot ou groupe de 1–2 mots max.
+   - etc.
 
-2) Un "formatLabel" :
+2) "formatLabel" :
    - "Vertical"
    - "Horizontal"
    - "Carré"
    - "Story"
    - "Reel"
    - "Shorts"
-   (Choisis le plus pertinent, par défaut "Vertical" si TikTok/Reels.)
+   (Choisis le plus pertinent, par défaut "Vertical" si tu n'es pas sûr.)
 
-3) Un "theme" :
+3) "theme" (qui sera utilisé comme Style DA dans Notion) :
+   Exemples :
    - "Lifestyle"
    - "Produit"
    - "Corporate"
@@ -154,15 +158,15 @@ Tu dois produire :
    - "Interview"
    - "Promo"
    - "Branding"
-   (Choisis un seul mot clé qui résume bien le contenu.)
+   (Choisis un seul mot ou groupe très court.)
 
-4) Une "description" (1 à 2 phrases max) qui résume le contenu pour la base de veille (pas un post social, juste une mini-fiche).
+4) "description" (1 à 2 phrases max) :
+   Résumé du contenu pour la base de veille (pas un post, pas un slogan).
 
-⚙️ TITRE FINAL (qui sera construit par le code, pas par toi) :
-Le code fera : "<type> <formatLabel> <theme> ${index}"
-
-Donc NE mets PAS de numéro dans tes réponses.
-Ne génère PAS le titre complet, seulement ces 3 briques.
+⚙️ Le titre final sera construit en code comme :
+"<type> <formatLabel> <theme> ${index}"
+Ne mets PAS de numéro dans tes réponses.
+Ne génère PAS le titre toi-même, ne renvoie QUE les champs demandés.
 
 📄 FORMAT DE SORTIE OBLIGATOIRE (JSON strict) :
 {
@@ -453,6 +457,28 @@ function analyzeNoteForTagsSimple(note) {
 }
 
 /* -----------------------------
+   MINIATURE DEPUIS LE CONTENU
+----------------------------- */
+
+async function fetchThumbnailUrl(url) {
+  if (!url) return null;
+  try {
+    // noembed supporte YouTube, TikTok, Vimeo, etc.
+    const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(url)}`;
+    const resp = await fetch(endpoint);
+    if (!resp.ok) {
+      console.warn("noembed non OK:", resp.status);
+      return null;
+    }
+    const data = await resp.json();
+    return data.thumbnail_url || null;
+  } catch (e) {
+    console.error("Erreur fetchThumbnailUrl:", e);
+    return null;
+  }
+}
+
+/* -----------------------------
    PARSE BODY SLACK
 ----------------------------- */
 
@@ -488,7 +514,7 @@ export default async function handler(req, res) {
       return sendSlack(res, {
         response_type: "ephemeral",
         text:
-          "🔎 La recherche `/ref` sera activée dans une prochaine étape. Pour l'instant, utilise `/addref` pour ajouter des références.",
+          "🔎 La recherche \"/ref\" sera activée dans une prochaine étape. Pour l'instant, utilise `/addref` pour ajouter des références.",
       });
     }
 
@@ -533,7 +559,7 @@ async function handleAddRef({ text, user_name, res }) {
   // 3) récupérer un index auto (01, 02, 03…)
   const index = await getNextIndexNumber();
 
-  // 4) IA pour type, format, thème + description
+  // 4) IA pour type, format, "thème" (utilisé comme Style DA) + description
   const ai = await analyzeWithOpenAI({ note, url, index });
 
   const type = ai.type || "Référence";
@@ -551,29 +577,44 @@ async function handleAddRef({ text, user_name, res }) {
   // 5) Tags / catégories via notre moteur simple (fiable)
   const auto = analyzeNoteForTagsSimple(note);
 
-  // 6) Création de la page Notion
+  // 6) On fabrique le Style DA final :
+  //    = ce que le moteur a trouvé + le theme IA (si différent)
+  let styleDA = Array.isArray(auto.styleDA) ? [...auto.styleDA] : [];
+  if (theme && !styleDA.includes(theme)) {
+    styleDA.push(theme);
+  }
+
+  // 7) On ajoute aussi le thème dans Tags globaux
+  let tags = Array.isArray(auto.tags) ? [...auto.tags] : [];
+  if (theme && !tags.includes(theme)) {
+    tags.push(theme);
+  }
+
+  // 8) On récupère éventuellement une miniature depuis l’URL
+  const thumbnail = await fetchThumbnailUrl(url);
+
+  // 9) Création de la page Notion
   await createReferencePage({
     title,
     url,
     description,
-    tags: auto.tags,
+    tags,
     format: auto.format,
     typeContenu: auto.typeContenu,
     miseEnScene: auto.miseEnScene,
-    styleDA: auto.styleDA,
+    styleDA,
     styleTypo: auto.styleTypo,
     montageMotion: auto.montageMotion,
     objectif: auto.objectif,
     ambiance: auto.ambiance,
     effets: auto.effets,
     idInterne: "",
+    thumbnail,
   });
 
-  // 7) Réponse Slack avec un peu de mise en forme
+  // 🔟 Réponse Slack avec un peu de mise en forme
   const tagsPreview =
-    auto.tags && auto.tags.length > 0
-      ? auto.tags.slice(0, 6).join(", ")
-      : "Aucun tag détecté";
+    tags && tags.length > 0 ? tags.slice(0, 6).join(", ") : "Aucun tag détecté";
 
   const blocks = [
     {
