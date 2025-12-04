@@ -81,130 +81,375 @@ async function createReferencePage(props) {
 }
 
 /* -----------------------------
-   IA : ANALYSE (OPTION B)
+   INDEX AUTO (01, 02, 03…)
 ----------------------------- */
 
-async function analyzeWithOpenAI({ note, url }) {
-  const safeNote = (note || "").slice(0, 8000);
+async function getNextIndexNumber() {
+  try {
+    // On récupère jusqu'à 100 pages, ça suffit largement pour ton usage actuel
+    const resp = await notion.databases.query({
+      database_id: databaseId,
+      page_size: 100,
+    });
+    const count = resp.results?.length || 0;
+    const n = count + 1;
+    return n.toString().padStart(2, "0");
+  } catch (e) {
+    console.error("Erreur getNextIndexNumber:", e);
+    return "01";
+  }
+}
+
+/* -----------------------------
+   IA : TITRE COURT + THÈME
+----------------------------- */
+
+async function analyzeWithOpenAI({ note, url, index }) {
+  const safeNote = (note || "").slice(0, 1000);
   const safeUrl = url || "";
 
   const prompt = `
-Tu es un assistant senior en direction artistique social media.
-On te donne :
-- une URL de contenu (TikTok, Reels, Shorts, etc.)
-- une courte description écrite par le créatif
+Tu es un assistant expert en naming pour une base de données interne de références créatives social media.
 
-À partir de ces infos, tu dois proposer :
-- un Titre concis et pertinent pour la référence
-- une Description courte (1 à 3 phrases) qui résume le contenu
-- des tags répartis dans des catégories précises
+🎯 OBJECTIF :
+À partir :
+- d'une URL de contenu (TikTok, Reels, Shorts, etc.)
+- d'une courte description écrite par le créatif
 
-Tu dois choisir uniquement parmi les listes ci-dessous.
+Tu dois produire :
 
-FORMAT (clé: "format") :
-["vertical", "horizontal", "carré", "carrousel", "story", "reel", "shorts", "16:9", "9:16", "1:1"]
+1) Un "type" (exemples possibles) :
+   - "UGC"
+   - "Incarné"
+   - "Facecam"
+   - "Interview"
+   - "Tutoriel"
+   - "Storytelling"
+   - "Motion"
+   - "Carousel"
+   - "Podcast"
+   Choisis UN seul mot ou groupe de 1–2 mots max.
 
-TYPE DE CONTENU (clé: "typeContenu") :
-["incarné", "facecam", "interview", "narration", "tutoriel", "storytelling", "démonstration", "comparatif",
- "réaction", "FAQ", "expérience sociale", "making-of", "challenge", "podcast", "ASMR", "review", "témoignage",
- "UGC", "présentation produit", "teaser", "annonce", "humoristique", "informatif", "éducatif"]
+2) Un "formatLabel" :
+   - "Vertical"
+   - "Horizontal"
+   - "Carré"
+   - "Story"
+   - "Reel"
+   - "Shorts"
+   (Choisis le plus pertinent, par défaut "Vertical" si TikTok/Reels.)
 
-MISE EN SCÈNE / CADRAGE (clé: "miseEnScene") :
-["fond vert", "fond simple", "fond décor réel", "en mouvement", "multicam", "plan fixe", "gros plan", "plan large",
- "split screen", "duo", "voix off", "face reveal", "POV", "maincam"]
+3) Un "theme" :
+   - "Lifestyle"
+   - "Produit"
+   - "Corporate"
+   - "Humour"
+   - "Tech"
+   - "Food"
+   - "Beauté"
+   - "Mode"
+   - "Gaming"
+   - "Culture"
+   - "Tuto"
+   - "Interview"
+   - "Promo"
+   - "Branding"
+   (Choisis un seul mot clé qui résume bien le contenu.)
 
-STYLE DA (clé: "styleDA") :
-["rétro", "futuriste", "brutaliste", "doodle", "cartoon", "flat design", "3D render", "cyberpunk", "corporate clean",
- "editorial", "pop culture", "tech / UI", "organic", "premium", "grunge", "minimaliste", "photojournalisme",
- "duotone", "monochrome", "vintage", "Y2K", "Pinterest aesthetic", "moodboard"]
+4) Une "description" (1 à 2 phrases max) qui résume le contenu pour la base de veille (pas un post social, juste une mini-fiche).
 
-STYLE TYPO (clé: "styleTypo") :
-["bold typography", "typo condensée", "typo géométrique", "typo serif", "typo manuscrite",
- "titre oversized", "typographie découpée", "typographie superposée", "typographie minimaliste"]
+⚙️ TITRE FINAL (qui sera construit par le code, pas par toi) :
+Le code fera : "<type> <formatLabel> <theme> ${index}"
 
-MONTAGE / MOTION (clé: "montageMotion") :
-["jumpcut", "cuts rapides", "transition dynamique", "transition créative", "titrage animé", "sous-titres dynamiques",
- "motion design", "animations 2D", "zooms rapides", "effets glitch", "effets VHS", "slow motion", "hyperlapse", "loop",
- "b-roll", "cutaways"]
+Donc NE mets PAS de numéro dans tes réponses.
+Ne génère PAS le titre complet, seulement ces 3 briques.
 
-OBJECTIF (clé: "objectif") :
-["branding", "awareness", "conversion", "promo", "teasing", "éducation", "onboarding", "recrutement",
- "tuto produit", "storytelling marque", "social proof", "top 3", "top 5", "news"]
-
-AMBIANCE (clé: "ambiance") :
-["chaud", "froid", "pastel", "néon", "saturé", "désaturé", "noir et blanc", "contrasté", "sombre", "lumineux",
- "color grading ciné", "naturel", "vibrant", "flash colors"]
-
-EFFETS (clé: "effets") :
-["grain film", "texture papier", "texture bruit", "ombres portées", "reflets", "stickers",
- "formes géométriques", "dégradés", "bandes VHS", "filtres vintage", "halos lumineux",
- "contours blancs", "double exposition", "transparences"]
-
-TAGS GLOBAUX (clé: "tags") :
-- tu peux réutiliser certains éléments ci-dessus pour que la recherche soit plus simple.
-
-CONTRAINTES :
-- Si tu n'es pas sûr pour une catégorie, renvoie un tableau vide [] pour cette catégorie.
-- Utilise tes connaissances sur les formats social media (par ex : TikTok → vertical, souvent facecam, etc.).
-- Réponds UNIQUEMENT en JSON valide, au format :
-
+📄 FORMAT DE SORTIE OBLIGATOIRE (JSON strict) :
 {
-  "title": "…",
-  "description": "…",
-  "tags": ["…", "..."],
-  "format": ["…"],
-  "typeContenu": ["…"],
-  "miseEnScene": ["…"],
-  "styleDA": ["…"],
-  "styleTypo": ["…"],
-  "montageMotion": ["…"],
-  "objectif": ["…"],
-  "ambiance": ["…"],
-  "effets": ["…"]
+  "type": "…",
+  "formatLabel": "…",
+  "theme": "…",
+  "description": "…"
 }
 
-URL du contenu :
-${safeUrl || "(aucune URL fournie)"}
+📝 DESCRIPTION UTILISATEUR :
+${safeNote || "(vide)"}
 
-Description du créatif :
-${safeNote || "(aucune description fournie)"}
+🔗 URL DU CONTENU :
+${safeUrl || "(aucune URL)"}
 `;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: "Tu es un assistant de tagging créatif. Tu renvoies uniquement du JSON valide.",
-      },
-      { role: "user", content: prompt },
-    ],
-  });
-
-  const raw = completion.choices[0]?.message?.content || "{}";
-  let parsed;
   try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error("Erreur de parse JSON OpenAI:", e, raw);
-    parsed = {};
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "Tu renvoies uniquement du JSON valide.",
+        },
+        { role: "user", content: prompt },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content || "{}";
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.error("Erreur parse JSON OpenAI:", e, raw);
+      parsed = {};
+    }
+
+    return {
+      type: parsed.type || null,
+      formatLabel: parsed.formatLabel || null,
+      theme: parsed.theme || null,
+      description: parsed.description || null,
+    };
+  } catch (err) {
+    console.error("Erreur OpenAI :", err);
+    return { type: null, formatLabel: null, theme: null, description: null };
+  }
+}
+
+/* -----------------------------
+   AUTO-TAGS "MAISON" (FIABLE)
+----------------------------- */
+
+const VOCAB = {
+  format: [
+    "vertical",
+    "horizontal",
+    "carré",
+    "carrousel",
+    "story",
+    "reel",
+    "shorts",
+    "16:9",
+    "9:16",
+    "1:1",
+  ],
+  typeContenu: [
+    "incarné",
+    "facecam",
+    "interview",
+    "narration",
+    "tutoriel",
+    "tuto",
+    "storytelling",
+    "démonstration",
+    "comparatif",
+    "réaction",
+    "FAQ",
+    "expérience sociale",
+    "making-of",
+    "challenge",
+    "podcast",
+    "ASMR",
+    "review",
+    "témoignage",
+    "UGC",
+    "présentation produit",
+    "teaser",
+    "annonce",
+    "humoristique",
+    "informatif",
+    "éducatif",
+  ],
+  miseEnScene: [
+    "fond vert",
+    "fond simple",
+    "fond décor réel",
+    "en mouvement",
+    "multicam",
+    "plan fixe",
+    "gros plan",
+    "plan large",
+    "split screen",
+    "duo",
+    "voix off",
+    "face reveal",
+    "POV",
+    "maincam",
+  ],
+  styleDA: [
+    "rétro",
+    "futuriste",
+    "brutaliste",
+    "doodle",
+    "cartoon",
+    "flat design",
+    "3D render",
+    "cyberpunk",
+    "corporate clean",
+    "editorial",
+    "pop culture",
+    "tech / UI",
+    "tech",
+    "organic",
+    "premium",
+    "grunge",
+    "minimaliste",
+    "photojournalisme",
+    "duotone",
+    "monochrome",
+    "vintage",
+    "Y2K",
+    "Pinterest aesthetic",
+    "moodboard",
+  ],
+  styleTypo: [
+    "bold typography",
+    "typo condensée",
+    "typo géométrique",
+    "typo serif",
+    "typo manuscrite",
+    "titre oversized",
+    "typographie découpée",
+    "typographie superposée",
+    "typographie minimaliste",
+  ],
+  montageMotion: [
+    "jumpcut",
+    "cuts rapides",
+    "transition dynamique",
+    "transition créative",
+    "titrage animé",
+    "sous-titres dynamiques",
+    "motion design",
+    "animations 2D",
+    "zooms rapides",
+    "effets glitch",
+    "effets VHS",
+    "slow motion",
+    "hyperlapse",
+    "loop",
+    "b-roll",
+    "cutaways",
+  ],
+  objectif: [
+    "branding",
+    "awareness",
+    "conversion",
+    "promo",
+    "teasing",
+    "éducation",
+    "onboarding",
+    "recrutement",
+    "tuto produit",
+    "storytelling marque",
+    "social proof",
+    "top 3",
+    "top 5",
+    "news",
+  ],
+  ambiance: [
+    "chaud",
+    "froid",
+    "pastel",
+    "néon",
+    "saturé",
+    "désaturé",
+    "noir et blanc",
+    "contrasté",
+    "sombre",
+    "lumineux",
+    "color grading ciné",
+    "naturel",
+    "vibrant",
+    "flash colors",
+  ],
+  effets: [
+    "grain film",
+    "texture papier",
+    "texture bruit",
+    "ombres portées",
+    "reflets",
+    "stickers",
+    "formes géométriques",
+    "dégradés",
+    "bandes VHS",
+    "filtres vintage",
+    "halos lumineux",
+    "contours blancs",
+    "double exposition",
+    "transparences",
+  ],
+};
+
+function analyzeNoteForTagsSimple(note) {
+  if (!note) {
+    return {
+      tags: [],
+      format: [],
+      typeContenu: [],
+      miseEnScene: [],
+      styleDA: [],
+      styleTypo: [],
+      montageMotion: [],
+      objectif: [],
+      ambiance: [],
+      effets: [],
+    };
   }
 
-  return {
-    title: parsed.title || null,
-    description: parsed.description || null,
-    tags: parsed.tags || [],
-    format: parsed.format || [],
-    typeContenu: parsed.typeContenu || [],
-    miseEnScene: parsed.miseEnScene || [],
-    styleDA: parsed.styleDA || [],
-    styleTypo: parsed.styleTypo || [],
-    montageMotion: parsed.montageMotion || [],
-    objectif: parsed.objectif || [],
-    ambiance: parsed.ambiance || [],
-    effets: parsed.effets || [],
+  const text = note.toLowerCase();
+
+  const result = {
+    tags: [],
+    format: [],
+    typeContenu: [],
+    miseEnScene: [],
+    styleDA: [],
+    styleTypo: [],
+    montageMotion: [],
+    objectif: [],
+    ambiance: [],
+    effets: [],
   };
+
+  function matchCategory(catKey, list) {
+    for (const value of list) {
+      const v = value.toLowerCase();
+      if (text.includes(v)) {
+        result[catKey].push(value);
+        result.tags.push(value);
+      }
+    }
+  }
+
+  matchCategory("format", VOCAB.format);
+  matchCategory("typeContenu", VOCAB.typeContenu);
+  matchCategory("miseEnScene", VOCAB.miseEnScene);
+  matchCategory("styleDA", VOCAB.styleDA);
+  matchCategory("styleTypo", VOCAB.styleTypo);
+  matchCategory("montageMotion", VOCAB.montageMotion);
+  matchCategory("objectif", VOCAB.objectif);
+  matchCategory("ambiance", VOCAB.ambiance);
+  matchCategory("effets", VOCAB.effets);
+
+  if (text.includes("humour") || text.includes("drôle")) {
+    if (!result.typeContenu.includes("humoristique")) {
+      result.typeContenu.push("humoristique");
+      result.tags.push("humoristique");
+    }
+  }
+  if (text.includes("tuto")) {
+    if (!result.typeContenu.includes("tutoriel")) {
+      result.typeContenu.push("tutoriel");
+      result.tags.push("tutoriel");
+    }
+  }
+
+  for (const key of Object.keys(result)) {
+    if (Array.isArray(result[key])) {
+      result[key] = [...new Set(result[key])];
+    }
+  }
+
+  return result;
 }
 
 /* -----------------------------
@@ -242,7 +487,8 @@ export default async function handler(req, res) {
     if (command === "/ref") {
       return sendSlack(res, {
         response_type: "ephemeral",
-        text: "🔎 La recherche `/ref` sera activée dans une prochaine étape. Pour l'instant, utilise `/addref`.",
+        text:
+          "🔎 La recherche `/ref` sera activée dans une prochaine étape. Pour l'instant, utilise `/addref` pour ajouter des références.",
       });
     }
 
@@ -264,7 +510,7 @@ export default async function handler(req, res) {
 }
 
 /* -----------------------------
-        /addref (avec IA)
+        /addref (Slack)
 ----------------------------- */
 
 async function handleAddRef({ text, user_name, res }) {
@@ -277,62 +523,98 @@ async function handleAddRef({ text, user_name, res }) {
     });
   }
 
-  // 1) On détecte l’URL où qu’elle soit
+  // 1) on détecte l’URL
   const urlMatch = raw.match(/https?:\/\/\S+/);
   const url = urlMatch ? urlMatch[0] : null;
 
-  // 2) Note = tout le texte sans l’URL
+  // 2) note = texte sans l’URL
   const note = url ? raw.replace(url, "").trim() : raw;
 
-  // 3) Appel à OpenAI pour enrichir la ref
-  let ai;
-  try {
-    ai = await analyzeWithOpenAI({ note, url });
-  } catch (e) {
-    console.error("Erreur OpenAI (analyzeWithOpenAI):", e);
-    ai = {};
-  }
+  // 3) récupérer un index auto (01, 02, 03…)
+  const index = await getNextIndexNumber();
 
-  const title =
-    ai.title ||
-    (note && note.length > 0
-      ? note.slice(0, 80)
-      : url
-      ? `Référence : ${url}`
-      : "Référence ajoutée via /addref");
+  // 4) IA pour type, format, thème + description
+  const ai = await analyzeWithOpenAI({ note, url, index });
+
+  const type = ai.type || "Référence";
+  const formatLabel = ai.formatLabel || "Vertical";
+  const theme = ai.theme || "Générique";
+
+  // Titre final normé : "UGC Vertical Lifestyle 01"
+  const title = `${type} ${formatLabel} ${theme} ${index}`;
 
   const description =
     ai.description ||
     ((note && note.length > 0 ? note : "Référence ajoutée sans description.") +
       `\n\nAjouté par ${user_name} depuis Slack.`);
 
-  // 4) Création de la page Notion avec les infos IA
+  // 5) Tags / catégories via notre moteur simple (fiable)
+  const auto = analyzeNoteForTagsSimple(note);
+
+  // 6) Création de la page Notion
   await createReferencePage({
     title,
     url,
     description,
-    tags: ai.tags || [],
-    format: ai.format || [],
-    typeContenu: ai.typeContenu || [],
-    miseEnScene: ai.miseEnScene || [],
-    styleDA: ai.styleDA || [],
-    styleTypo: ai.styleTypo || [],
-    montageMotion: ai.montageMotion || [],
-    objectif: ai.objectif || [],
-    ambiance: ai.ambiance || [],
-    effets: ai.effets || [],
+    tags: auto.tags,
+    format: auto.format,
+    typeContenu: auto.typeContenu,
+    miseEnScene: auto.miseEnScene,
+    styleDA: auto.styleDA,
+    styleTypo: auto.styleTypo,
+    montageMotion: auto.montageMotion,
+    objectif: auto.objectif,
+    ambiance: auto.ambiance,
+    effets: auto.effets,
     idInterne: "",
   });
 
-  // 5) Réponse Slack
+  // 7) Réponse Slack avec un peu de mise en forme
+  const tagsPreview =
+    auto.tags && auto.tags.length > 0
+      ? auto.tags.slice(0, 6).join(", ")
+      : "Aucun tag détecté";
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `✅ *Référence ajoutée* par *${user_name}*`,
+      },
+    },
+    {
+      type: "section",
+      fields: [
+        {
+          type: "mrkdwn",
+          text: `*Titre*\n${title}`,
+        },
+        url
+          ? {
+              type: "mrkdwn",
+              text: `*URL*\n${url}`,
+            }
+          : {
+              type: "mrkdwn",
+              text: `*URL*\n_(aucune)`,
+            },
+        {
+          type: "mrkdwn",
+          text: `*Type / Format / Thème*\n${type} / ${formatLabel} / ${theme}`,
+        },
+        {
+          type: "mrkdwn",
+          text: `*Tags détectés*\n${tagsPreview}`,
+        },
+      ],
+    },
+  ];
+
   return sendSlack(res, {
     response_type: "ephemeral",
-    text:
-      "✅ Référence ajoutée par *" +
-      user_name +
-      "*\n*Titre évalué par l’IA* : " +
-      title +
-      (url ? "\nURL : " + url : ""),
+    text: "Référence ajoutée.",
+    blocks,
   });
 }
 
