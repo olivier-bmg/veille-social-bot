@@ -5,7 +5,9 @@ import OpenAI from "openai";
 import { Client as NotionClient } from "@notionhq/client";
 import { Pinecone } from "@pinecone-database/pinecone";
 
-// ---------- CONFIG CLIENTS ----------
+/* -----------------------------
+   CONFIGURATION DES CLIENTS
+----------------------------- */
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -27,7 +29,9 @@ function getPineconeIndex() {
   return pinecone.Index(indexName);
 }
 
-// ---------- OUTILS OPENAI ----------
+/* -----------------------------
+          OPENAI
+----------------------------- */
 
 async function embedText(text) {
   const cleaned = (text || "").slice(0, 8000);
@@ -38,7 +42,9 @@ async function embedText(text) {
   return response.data[0].embedding;
 }
 
-// ---------- OUTILS NOTION ----------
+/* -----------------------------
+         NOTION HELPERS
+----------------------------- */
 
 function toMultiSelect(values) {
   if (!values || !Array.isArray(values)) return [];
@@ -67,24 +73,12 @@ async function createReferencePage(props) {
     parent: { database_id: databaseId },
     properties: {
       Title: {
-        title: [
-          {
-            text: {
-              content: title || "Référence sans titre",
-            },
-          },
-        ],
+        title: [{ text: { content: title || "Référence sans titre" } }],
       },
       URL: { url: url || null },
       Tumbnail: { url: null },
       Description: {
-        rich_text: [
-          {
-            text: {
-              content: description || "",
-            },
-          },
-        ],
+        rich_text: [{ text: { content: description || "" } }],
       },
       Tags: { multi_select: toMultiSelect(tags) },
       Format: { multi_select: toMultiSelect(format) },
@@ -97,26 +91,18 @@ async function createReferencePage(props) {
       Ambiance: { multi_select: toMultiSelect(couleursMood) },
       Effets: { multi_select: toMultiSelect(elementsGraphiques) },
       "ID interne": {
-        rich_text: idInterne
-          ? [
-              {
-                text: {
-                  content: idInterne,
-                },
-              },
-            ]
-          : [],
+        rich_text: idInterne ? [{ text: { content: idInterne } }] : [],
       },
-      "Tags IA validés": {
-        checkbox: false,
-      },
+      "Tags IA validés": { checkbox: false },
     },
   });
 
   return page.id;
 }
 
-// ---------- OUTILS PINECONE ----------
+/* -----------------------------
+         PINECONE HELPERS
+----------------------------- */
 
 async function upsertReferenceVector({ id, embedding, metadata }) {
   const index = getPineconeIndex();
@@ -138,30 +124,28 @@ async function searchSimilar({ embedding, topK = 5 }) {
   });
 }
 
-// ---------- PARSE BODY SLACK ----------
+/* -----------------------------
+       PARSE BODY SLACK
+----------------------------- */
 
 function parseSlackBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk) => {
-      body += chunk.toString();
-    });
-    req.on("end", () => {
-      const parsed = querystring.parse(body);
-      resolve(parsed);
-    });
+    req.on("data", (chunk) => (body += chunk.toString()));
+    req.on("end", () => resolve(querystring.parse(body)));
     req.on("error", reject);
   });
 }
 
-// ---------- HANDLER PRINCIPAL ----------
+/* -----------------------------
+       HANDLER PRINCIPAL
+----------------------------- */
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.statusCode = 405;
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ error: "Method not allowed" }));
-    return;
+    return res.end(JSON.stringify({ error: "Method not allowed" }));
   }
 
   try {
@@ -169,38 +153,42 @@ export default async function handler(req, res) {
     const { command, text, user_name } = params;
 
     if (command === "/addref") {
-      await handleAddRef({ text, user_name, res });
-      return;
+      return await handleAddRef({ text, user_name, res });
     }
 
     if (command === "/ref") {
-      await handleSearch({ text, user_name, res });
-      return;
+      return await handleSearch({ text, user_name, res });
     }
 
     return sendSlack(res, {
       response_type: "ephemeral",
-      text: "Commande non reconnue.",
+      text: "Commande inconnue.",
     });
   } catch (err) {
-    console.error(err);
+    console.error("BOT ERROR:", err);
+    const msg =
+      err?.message ||
+      err?.toString() ||
+      "Erreur inconnue (aucun message d’erreur fourni).";
     return sendSlack(res, {
       response_type: "ephemeral",
-      text: "❌ Erreur côté bot. Vérifie les logs Vercel.",
+      text: `❌ Erreur côté bot : ${msg}`,
     });
   }
 }
 
-// ---------- LOGIQUE /addref (version rapide) ----------
+/* -----------------------------
+        /addref (rapide)
+----------------------------- */
 
 async function handleAddRef({ text, user_name, res }) {
   const raw = (text || "").trim();
+
   if (!raw) {
     return sendSlack(res, {
       response_type: "ephemeral",
       text: "Utilisation : `/addref URL [description]`",
     });
-    return;
   }
 
   const [url, ...rest] = raw.split(/\s+/);
@@ -233,13 +221,7 @@ async function handleAddRef({ text, user_name, res }) {
   await upsertReferenceVector({
     id: pageId,
     embedding,
-    metadata: {
-      title,
-      url,
-      description,
-      tags: [],
-      format: [],
-    },
+    metadata: { title, url, description, tags: [], format: [] },
   });
 
   return sendSlack(res, {
@@ -248,10 +230,13 @@ async function handleAddRef({ text, user_name, res }) {
   });
 }
 
-// ---------- LOGIQUE /ref (recherche) ----------
+/* -----------------------------
+          /ref (recherche)
+----------------------------- */
 
 async function handleSearch({ text, user_name, res }) {
   const query = (text || "").trim();
+
   if (!query) {
     return sendSlack(res, {
       response_type: "ephemeral",
@@ -272,28 +257,20 @@ async function handleSearch({ text, user_name, res }) {
   const blocks = [
     {
       type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `🔎 Résultats pour : *${query}* (par *${user_name}*)`,
-      },
+      text: { type: "mrkdwn", text: `🔎 Résultats pour : *${query}*` },
     },
     { type: "divider" },
   ];
 
   for (const match of results.matches.slice(0, 3)) {
     const m = match.metadata || {};
-    const tags =
-      Array.isArray(m.tags) && m.tags.length > 0
-        ? `*Tags :* ${m.tags.join(", ")}`
-        : "";
-
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
         text: `*${m.title || "Sans titre"}*\n${m.description || ""}\n${
           m.url ? `<${m.url}|Voir>` : ""
-        }\n${tags}`,
+        }`,
       },
     });
     blocks.push({ type: "divider" });
@@ -302,10 +279,12 @@ async function handleSearch({ text, user_name, res }) {
   return sendSlack(res, { response_type: "ephemeral", blocks });
 }
 
-// ---------- UTIL ----------
+/* -----------------------------
+            UTIL
+----------------------------- */
 
 function sendSlack(res, payload) {
   res.statusCode = 200;
   res.setHeader("Content-Type", "application/json");
-  res.end(JSON.stringify(payload));
+  return res.end(JSON.stringify(payload));
 }
